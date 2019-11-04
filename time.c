@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
     else
     {
         status = waitx(&a, &b);
-        printf(1, "\n Waiting time= %d \n Running time= %d with exit status %d \n", a, b, status);
+        printf(1, "\n Waiting time= %d \n Running time= %d exitted with pid %d \n", a, b, status);
         exit();
     }
 }

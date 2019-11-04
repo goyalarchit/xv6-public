@@ -410,7 +410,8 @@ void scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    //DEFAULT SCHEDULER
+    /*for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     {
       if (p->state != RUNNABLE)
         continue;
@@ -423,6 +424,39 @@ void scheduler(void)
       p->state = RUNNING;
 
       swtch(&(c->scheduler), p->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+    }*/
+
+    //FCFS
+    struct proc *minP = 0;
+    // Loop over process table looking for process to run.
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    {
+      if (p->state != RUNNABLE)
+        continue;
+      if (minP == 0)
+      {
+        minP = p;
+      }
+      else
+      {
+        if (minP->ctime > p->ctime)
+          minP = p;
+      }
+    }
+    if (minP != 0)
+    {
+      p = minP;
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+
+      swtch(&(c->scheduler), p->context);
+      cprintf("Scheduled process with pid %d\n", p->pid);
       switchkvm();
 
       // Process is done running for now.
