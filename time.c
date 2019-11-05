@@ -9,7 +9,8 @@ int main(int argc, char *argv[])
     {
         for (a = 0; a < argc; a++)
             printf(1, "\n %s", argv[a]);
-        exec(argv[1], argv);
+        argv[a] = 0;
+        exec(argv[1], argv + 1);
         printf(1, "Exec %s failed", argv[1]);
         exit();
     }

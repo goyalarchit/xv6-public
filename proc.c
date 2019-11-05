@@ -120,6 +120,17 @@ found:
   p->ctime = ticks;
   p->etime = 0;
   p->rtime = 0;
+  //Additional book keeping for MLFQ and getpinfo sys call
+  p->proc_stats.pid = p->pid;
+  p->proc_stats.runtime = 0;
+  p->proc_stats.num_run = 0;
+  p->proc_stats.current_queue = 0;
+  p->proc_stats.ticks[0] = 1;
+  p->proc_stats.ticks[1] = 2;
+  p->proc_stats.ticks[2] = 4;
+  p->proc_stats.ticks[3] = 8;
+  p->proc_stats.ticks[4] = 16;
+  p->proc_stats.last_res_time = ticks;
 
   return p;
 }
@@ -362,7 +373,9 @@ int waitx(int *wtime, int *rtime)
         // before the process gets removed from ptable
         *rtime = p->rtime;
         *wtime = p->etime - p->ctime - p->rtime;
-
+        //cprintf("ctime %d \n", p->ctime);
+        //cprintf("rtime %d \n", p->rtime);
+        //cprintf("etime %d \n", p->etime);
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
@@ -402,7 +415,7 @@ void scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-
+  //cprintf(" Scheduler pid %d", myproc()->pid);
   for (;;)
   {
     // Enable interrupts on this processor.
@@ -410,8 +423,11 @@ void scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+
+#ifdef DEFAULT
+
     //DEFAULT SCHEDULER
-    /*for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     {
       if (p->state != RUNNABLE)
         continue;
@@ -429,7 +445,10 @@ void scheduler(void)
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
-    }*/
+    }
+
+#else
+#ifdef FCFS
 
     //FCFS
     struct proc *minP = 0;
@@ -455,14 +474,113 @@ void scheduler(void)
       switchuvm(p);
       p->state = RUNNING;
 
+      //cprintf("Scheduled process with pid %d\n", p->pid);
       swtch(&(c->scheduler), p->context);
-      cprintf("Scheduled process with pid %d\n", p->pid);
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
+
+#else
+#ifdef PRIORITY
+
+    //PRIORITY
+    /*Code Goes Here (Yest To be Implemented)
+*/
+
+#else
+#ifdef MLFQ
+
+    //MLFQ
+
+    struct proc *q[5] = {0, 0, 0, 0, 0};
+    int cur_q;
+    // Loop over process table looking for process to run.
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    {
+      if (p->state != RUNNABLE)
+        continue;
+      //Ageing implementation
+      if (p->pid > 2)
+      {
+        if ((ticks - p->proc_stats.last_res_time) > 15 && p->proc_stats.current_queue != 0)
+        {
+          cur_q = --p->proc_stats.current_queue;
+          p->proc_stats.ticks[cur_q] = 1;
+          p->proc_stats.ticks[cur_q] <<= (cur_q + 1);
+          p->proc_stats.last_res_time = ticks;
+          cprintf("Ageing = %d New Queue = %d Alloted %d ticks \n", p->pid, p->proc_stats.current_queue, p->proc_stats.ticks[cur_q]);
+        }
+      }
+      cur_q = p->proc_stats.current_queue;
+      //if no process is there in corrresponding queue
+      //then add it to the queue front
+      //otherwise change the process in the queue according to internal criteria
+      //FCFS for queue 0,1,2,3
+      //Round Robin for 4
+      if (q[cur_q] == 0)
+      {
+        q[cur_q] = p;
+      }
+      else
+      {
+        if (cur_q != 4)
+        {
+          if (q[cur_q]->ctime > p->ctime)
+            q[cur_q] = p;
+        }
+        else
+        {
+          if (q[4]->proc_stats.last_res_time > p->proc_stats.last_res_time)
+            q[cur_q] = p;
+        }
+      }
+    }
+    //loop through all queue to check if any process exists
+    //in queue from highest priority to lowest priority
+    for (int i = 0; i < 5; i++)
+    {
+      if (q[i] != 0)
+      {
+        p = q[i];
+        p->proc_stats.last_res_time = ticks;
+        if (p->pid > 2)
+          cprintf("pid = %d Queue level = %d Avl. Time = %d \n", p->pid, i, p->proc_stats.ticks[i]);
+
+        //cprintf("test %d %d\n", p->pid, p->proc_stats.current_queue);
+        //run the found process till either its ticks expire or is not runnable
+        while (p->proc_stats.ticks[i] > 0 && p->state == RUNNABLE)
+        {
+          c->proc = p;
+          switchuvm(p);
+          p->state = RUNNING;
+          //cprintf("Scheduled process with pid %d\n", p->pid);
+
+          swtch(&(c->scheduler), p->context);
+          switchkvm();
+
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+          //Searching if any higher priority queue process has entered or not
+          //if any such process found interrupt execution and force next iteration
+          //of scheduler
+          for (struct proc *np = ptable.proc; np < &ptable.proc[NPROC]; np++)
+            if (np->state == RUNNABLE && np->proc_stats.current_queue < i)
+              break;
+        }
+        p->proc_stats.num_run++; //increase the number of run before next iteration of scheduler
+        //cprintf("atest %d %d\n", p->pid, p->proc_stats.current_queue);
+
+        break;
+      }
+    }
+#endif
+#endif
+#endif
+#endif
     release(&ptable.lock);
   }
 }
@@ -652,7 +770,28 @@ void update_stats()
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
   {
     if (p->state == RUNNING)
+    {
+      int rem_ticks, cur_q;
+      //p->proc_stats.last_res_time = ticks;
       p->rtime++;
+      p->proc_stats.runtime++;
+      cur_q = p->proc_stats.current_queue;
+      rem_ticks = --p->proc_stats.ticks[cur_q];
+      if (p->pid > 2)
+      {
+        if (rem_ticks == 0)
+        {
+          if (cur_q != 4)
+            p->proc_stats.current_queue++;
+          else
+            p->proc_stats.ticks[4] = 16;
+        }
+      }
+      else
+      {
+        p->proc_stats.ticks[0] = 100;
+      }
+    }
   }
   release(&ptable.lock);
 }
