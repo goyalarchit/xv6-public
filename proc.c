@@ -131,6 +131,7 @@ found:
   p->proc_stats.ticks[3] = 8;
   p->proc_stats.ticks[4] = 16;
   p->proc_stats.last_res_time = ticks;
+  p->priority = 60;
 
   return p;
 }
@@ -436,6 +437,7 @@ void scheduler(void)
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       c->proc = p;
+      p->proc_stats.last_res_time = ticks;
       switchuvm(p);
       p->state = RUNNING;
 
@@ -445,6 +447,7 @@ void scheduler(void)
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+      p->proc_stats.num_run++;
     }
 
 #else
@@ -470,6 +473,8 @@ void scheduler(void)
     if (minP != 0)
     {
       p = minP;
+      p->proc_stats.last_res_time = ticks;
+
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
@@ -481,14 +486,56 @@ void scheduler(void)
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+      p->proc_stats.num_run++;
     }
 
 #else
 #ifdef PRIORITY
 
     //PRIORITY
-    /*Code Goes Here (Yest To be Implemented)
-*/
+    struct proc *minP = 0;
+    // Loop over process table looking for process to run.
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    {
+      if (p->state != RUNNABLE)
+        continue;
+      if (p->pid < 3)
+        p->priority = 0;
+      if (minP == 0)
+      {
+        minP = p;
+      }
+      else
+      {
+        if (minP->priority > p->priority)
+          minP = p;
+        else
+        {
+          if (minP->priority == p->priority)
+          {
+            if (minP->proc_stats.last_res_time > p->proc_stats.last_res_time)
+              minP = p;
+          }
+        }
+      }
+    }
+    if (minP != 0)
+    {
+      p = minP;
+      p->proc_stats.last_res_time = ticks;
+
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      //cprintf("Scheduled process with pid %d\n", p->pid);
+      swtch(&(c->scheduler), p->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+      p->proc_stats.num_run++;
+    }
 
 #else
 #ifdef MLFQ
@@ -510,8 +557,8 @@ void scheduler(void)
           cur_q = --p->proc_stats.current_queue;
           p->proc_stats.ticks[cur_q] = 1;
           p->proc_stats.ticks[cur_q] <<= (cur_q + 1);
-          p->proc_stats.last_res_time = ticks;
-          cprintf("Ageing = %d New Queue = %d Alloted %d ticks \n", p->pid, p->proc_stats.current_queue, p->proc_stats.ticks[cur_q]);
+          //p->proc_stats.last_res_time = ticks;
+          //cprintf("Ageing = %d New Queue = %d Alloted %d ticks LRT = %d\n", p->pid, p->proc_stats.current_queue, p->proc_stats.ticks[cur_q], p->proc_stats.last_res_time);
         }
       }
       cur_q = p->proc_stats.current_queue;
@@ -545,10 +592,11 @@ void scheduler(void)
       if (q[i] != 0)
       {
         p = q[i];
-        p->proc_stats.last_res_time = ticks;
-        if (p->pid > 2)
-          cprintf("pid = %d Queue level = %d Avl. Time = %d \n", p->pid, i, p->proc_stats.ticks[i]);
+        //p->proc_stats.last_res_time = ticks;
 
+        /*if (p->pid > 2)
+          cprintf("pid = %d Queue level = %d Avl. Time = %d \n", p->pid, i, p->proc_stats.ticks[i]);*/
+        //  cprintf("%d ->", p->pid);
         //cprintf("test %d %d\n", p->pid, p->proc_stats.current_queue);
         //run the found process till either its ticks expire or is not runnable
         while (p->proc_stats.ticks[i] > 0 && p->state == RUNNABLE)
@@ -567,9 +615,12 @@ void scheduler(void)
           //Searching if any higher priority queue process has entered or not
           //if any such process found interrupt execution and force next iteration
           //of scheduler
-          for (struct proc *np = ptable.proc; np < &ptable.proc[NPROC]; np++)
+          struct proc *np;
+          for (np = ptable.proc; np < &ptable.proc[NPROC]; np++)
             if (np->state == RUNNABLE && np->proc_stats.current_queue < i)
               break;
+          if (np->proc_stats.current_queue < i)
+            break;
         }
         p->proc_stats.num_run++; //increase the number of run before next iteration of scheduler
         //cprintf("atest %d %d\n", p->pid, p->proc_stats.current_queue);
@@ -771,16 +822,19 @@ void update_stats()
   {
     if (p->state == RUNNING)
     {
-      int rem_ticks, cur_q;
+
       //p->proc_stats.last_res_time = ticks;
       p->rtime++;
       p->proc_stats.runtime++;
+#ifdef MLFQ
+      int rem_ticks, cur_q;
       cur_q = p->proc_stats.current_queue;
       rem_ticks = --p->proc_stats.ticks[cur_q];
       if (p->pid > 2)
       {
         if (rem_ticks == 0)
         {
+          p->proc_stats.last_res_time = ticks;
           if (cur_q != 4)
             p->proc_stats.current_queue++;
           else
@@ -791,7 +845,49 @@ void update_stats()
       {
         p->proc_stats.ticks[0] = 100;
       }
+#endif
     }
   }
   release(&ptable.lock);
+}
+
+int getpinfo(int pid, struct proc_stat *ps)
+{
+  struct proc *p;
+  acquire(&ptable.lock);
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    if (p->pid == pid)
+    {
+      p->proc_stats.runtime = p->rtime;
+      *ps = p->proc_stats;
+      release(&ptable.lock);
+      return 0;
+    }
+  }
+  release(&ptable.lock);
+  return -1;
+}
+
+int set_priority(int pid, int priority)
+{
+  int pr;
+  struct proc *p;
+  if ((priority > 0) && (priority < 100))
+  {
+    acquire(&ptable.lock);
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    {
+      if (p->pid == pid)
+      {
+        pr = p->priority;
+        p->priority = priority;
+        release(&ptable.lock);
+        return pr;
+      }
+    }
+    release(&ptable.lock);
+    return -1;
+  }
+  return -1;
 }

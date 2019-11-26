@@ -9,30 +9,29 @@ rand()
     return randstate;
 }
 
-int main(int argc, char *argv[])
+int main(/*int argc, char *argv[]*/)
 {
-    int cpid, status, a, b, i, s;
-    char *args[] = {"wc", "ls"};
+    int cpid, i;
+    int p[] = {70, 40, 5, 20, 40, 8, 13, 50, 35, 90};
     for (i = 0; i < 10; i++)
     {
-        s = rand() % 10;
         cpid = fork();
-        if (cpid == 0)
+        if (cpid != 0)
         {
-            printf(1, "%d \n", i);
-            for (a = 0; a < 1000; a++)
-                b++;
-            printf(1, " Going to sleep for %d  \n", s);
-            //sleep(s);
-            exec(args[0], args);
-
-            printf(1, "\n");
+            set_priority(cpid, p[i]);
+            printf(1, "Pid = %d Priority = %d \n", cpid, p[i]);
+        }
+        else
+        {
+            volatile unsigned long long i;
+            for (i = 0; i < 1000000000ULL; ++i)
+                ;
+            exit();
         }
     }
     for (i = 0; i < 10; i++)
     {
-        status = waitx(&a, &b);
-        printf(1, "Wait time= %d Run time= %d process pid %d exitted \n", a, b, status);
+        wait();
     }
     exit();
 }
